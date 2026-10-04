@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, time::Duration};
 
 use crate::{engine::ProcessTable, process::Pid, sched::scheduler::Scheduler};
 
@@ -6,12 +6,12 @@ pub struct RoundRobin {
     tasks: VecDeque<Pid>,
 
     // Round robin configuration
-    time_slice: u32,
-    interrupt: u32,
+    time_slice: Duration,
+    interrupt: Duration,
 
     // last task state tracking
     last_task: Option<Pid>,
-    cum_time: u32,
+    cum_time: Duration,
 }
 
 impl Scheduler for RoundRobin {
@@ -25,7 +25,7 @@ impl Scheduler for RoundRobin {
         if let Some(last_task_pid) = self.last_task && pid == last_task_pid {
             if self.cum_time == self.time_slice {
                 self.last_task = None;
-                self.cum_time = 0;
+                self.cum_time = Duration::ZERO;
                 self.tasks.push_back(pid);
             } else {
                 self.tasks.push_front(pid);
@@ -37,13 +37,13 @@ impl Scheduler for RoundRobin {
 }
 
 impl RoundRobin {
-    pub fn new(interrupt: u32, slice_mult: u32) -> Self {
+    pub fn new(interrupt: Duration, slice_mult: u32) -> Self {
         Self {
             tasks: VecDeque::new(),
             time_slice: interrupt * slice_mult,
             interrupt,
             last_task: None,
-            cum_time: 0,
+            cum_time: Duration::ZERO,
         }
     }
 }

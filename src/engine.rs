@@ -36,10 +36,8 @@ impl<S: Scheduler> Engine<S> {
         }
     }
 
-    pub fn run_tick(&mut self) {
-        let Some(current_process) = self.current_process else {
-            return;
-        };
+    pub fn run_tick(&mut self) -> Option<Pid> {
+        let current_process = self.current_process?;
 
         let current_process_id = current_process;
         let current_process = self.process_table.get_mut(&current_process).unwrap();
@@ -82,6 +80,8 @@ impl<S: Scheduler> Engine<S> {
             let process = self.process_table.get_mut(&current_process).unwrap();
             process.state = ProcessState::Running;
         }
+
+        self.current_process
     }
 
     pub fn create(&mut self, parent: Option<Pid>) {
