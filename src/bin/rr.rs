@@ -3,8 +3,13 @@ use std::time::Duration;
 use scheduler::{engine::Engine, sched::rr::RoundRobin};
 
 fn main() {
+    // tracing
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .init();
+
     // create the engine
-    let mut engine = Engine::new(RoundRobin::new(Duration::from_millis(10), 3));
+    let mut engine = Engine::new(RoundRobin::new(Duration::from_millis(10), 1));
 
     // create 10 tasks without parents
     for _ in 0..1000 {

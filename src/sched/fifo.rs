@@ -1,7 +1,8 @@
 use std::collections::VecDeque;
 
-use crate::{process::Pid, sched::scheduler::Scheduler};
+use crate::{process::{Pid, Process}, sched::scheduler::Scheduler};
 
+#[derive(Default)]
 pub struct Fifo {
     tasks: VecDeque<Pid>,
     last_task: Option<Pid>,
@@ -13,11 +14,17 @@ impl Scheduler for Fifo {
         self.last_task
     }
 
-    fn enqueue(&mut self, pid: Pid) {
-        if let Some(last_task) = self.last_task && last_task == pid {
-            self.tasks.push_front(pid);
+    fn enqueue(&mut self, proc: &Process) {
+        if let Some(last_task) = self.last_task && last_task == proc.id {
+            self.tasks.push_front(proc.id);
         } else {
-            self.tasks.push_back(pid);
+            self.tasks.push_back(proc.id);
         }
+    }
+}
+
+impl Fifo {
+    pub fn new() -> Self {
+        Self::default()
     }
 }

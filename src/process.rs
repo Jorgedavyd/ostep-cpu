@@ -16,6 +16,7 @@ pub enum ProcessState {
     Finished,
 }
 
+#[derive(Debug)]
 pub enum Syscall {
     Fork,
 }

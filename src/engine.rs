@@ -1,5 +1,7 @@
 use std::{collections::BTreeMap, time::Duration};
+
 use rand::RngExt;
+use tracing::{debug, info, instrument, trace, warn};
 
 use crate::{
     process::{Pid, Process, ProcessState, Syscall, Trap},
@@ -11,18 +13,14 @@ const INTERRUPT_INTERVAL: Duration = Duration::from_millis(10);
 pub type ProcessTable = BTreeMap<Pid, Process>;
 
 pub struct Engine<S: Scheduler> {
-    // scheduler
     scheduler: S,
 
-    // process state
-    process_table: BTreeMap<Pid, Process>,
+    process_table: ProcessTable,
     current_process: Option<Pid>,
 
-    // timer interrupt
     interrupt_interval: Duration,
 
-    // randomness
-    rng: Box<dyn rand::Rng>
+    rng: Box<dyn rand::Rng>,
 }
 
 impl<S: Scheduler> Engine<S> {
@@ -32,65 +30,157 @@ impl<S: Scheduler> Engine<S> {
             process_table: BTreeMap::new(),
             current_process: None,
             interrupt_interval: INTERRUPT_INTERVAL,
-            rng: Box::new(rand::rng())
+            rng: Box::new(rand::rng()),
         }
     }
 
+    fn dispatch(&mut self) -> Option<Pid> {
+        let pid = self.scheduler.next(&self.process_table)?;
+        let process = self
+            .process_table
+            .get_mut(&pid)
+            .expect("scheduler returned invalid PID, couldn't find in Process Table");
+
+        process.state = ProcessState::Running;
+        self.current_process = Some(pid);
+        self.current_process
+    }
+
+    #[instrument(
+        name = "interrupt",
+        skip(self),
+        fields(
+            current_pid = ?self.current_process,
+            process_count = self.process_table.len(),
+        )
+    )]
     pub fn run_tick(&mut self) -> Option<Pid> {
-        let current_process = self.current_process?;
+        if self.current_process.is_none() {
+            return self.dispatch();
+        }
 
-        let current_process_id = current_process;
-        let current_process = self.process_table.get_mut(&current_process).unwrap();
+        let current_pid = self
+            .current_process
+            .expect("called trap on non-existent process");
 
-        // simulate response from the last task
-        let trap = current_process.response(&mut self.rng);
+        trace!(pid = current_pid, "executing process");
 
-        // update current process state
-        current_process.consumed_cpu(match trap {
-            Trap::Syscall { elapsed, .. } => elapsed,
-            Trap::TimerInterrupt => self.interrupt_interval,
-        });
+        let process = self
+            .process_table
+            .get_mut(&current_pid)
+            .expect("current process missing from process table");
 
-        current_process.state = if current_process.done() {
+        let trap_response = process.response(&mut self.rng);
+
+        let elapsed = match &trap_response {
+            Trap::Syscall { kind, elapsed } => {
+                debug!(
+                    pid = current_pid,
+                    syscall = ?kind,
+                    elapsed_ms = elapsed.as_millis(),
+                    "syscall trap"
+                );
+
+                *elapsed
+            }
+
+            Trap::TimerInterrupt => {
+                debug!(
+                    pid = current_pid,
+                    interval_ms = self.interrupt_interval.as_millis(),
+                    "timer interrupt"
+                );
+
+                self.interrupt_interval
+            }
+        };
+
+        process.consumed_cpu(elapsed);
+
+        trace!(
+            pid = current_pid,
+            elapsed_ms = elapsed.as_millis(),
+            "CPU time consumed"
+        );
+
+        process.state = if process.done() {
             ProcessState::Finished
         } else {
             ProcessState::Ready
         };
 
-        // enqueue it or let it die
-        match current_process.state {
+        debug!(
+            pid = current_pid,
+            state = ?process.state,
+            "process state transition"
+        );
+
+        match process.state {
             ProcessState::Running => unreachable!(),
-            ProcessState::Ready => self.scheduler.enqueue(current_process.id),
-            ProcessState::Finished => {
-                self.process_table.remove_entry(&current_process_id);
+
+            ProcessState::Ready => {
+                trace!(pid = process.id, "returning process to scheduler");
+
+                self.scheduler.enqueue(process);
             }
-            ProcessState::Blocked => (),
+
+            ProcessState::Finished => {
+                info!(pid = current_pid, "process finished");
+
+                self.process_table.remove_entry(&current_pid);
+            }
+
+            ProcessState::Blocked => {
+                debug!(pid = current_pid, "process blocked");
+            }
         }
 
-        // Syscalls only fork
-        if let Trap::Syscall { kind, .. } = trap && matches!(kind, Syscall::Fork) {
-            self.create(Some(current_process_id));
+        if let Trap::Syscall {
+            kind: Syscall::Fork,
+            ..
+        } = trap_response
+        {
+            info!(parent_pid = current_pid, "fork requested");
+
+            self.create(Some(current_pid));
         }
 
-
-        // select the next current task
-        self.current_process = self.scheduler.next(&self.process_table);
-
-        if let Some(current_process) = self.current_process {
-            let process = self.process_table.get_mut(&current_process).unwrap();
-            process.state = ProcessState::Running;
-        }
-
-        self.current_process
+        self.dispatch()
     }
 
+    #[instrument(skip(self), fields(?parent))]
     pub fn create(&mut self, parent: Option<Pid>) {
-        let new_pid = self.process_table.last_key_value().map(|(&key, _)| key + 1).unwrap_or(0);
-        self.process_table.insert(new_pid, Process::new(new_pid, ProcessState::Ready, parent, self.rng.random_range(0..10) * INTERRUPT_INTERVAL));
-        self.scheduler.enqueue(new_pid);
+        let new_pid = self
+            .process_table
+            .last_key_value()
+            .map(|(&key, _)| key + 1)
+            .unwrap_or(0);
+
+        let cpu_time = self.rng.random_range(0..10) * INTERRUPT_INTERVAL;
+
+        let process = Process::new(new_pid, ProcessState::Ready, parent, cpu_time);
+
+        self.scheduler.enqueue(&process);
+        self.process_table.insert(new_pid, process);
+
+        info!(
+            pid = new_pid,
+            ?parent,
+            cpu_time_ms = cpu_time.as_millis(),
+            "process created"
+        );
     }
 
+    #[instrument(skip(self))]
     pub fn destroy(&mut self, pid: Pid) {
-        self.process_table.remove_entry(&pid);
+        match self.process_table.remove_entry(&pid) {
+            Some(_) => {
+                info!(pid, "process destroyed");
+            }
+
+            None => {
+                warn!(pid, "attempted to destroy nonexistent process");
+            }
+        }
     }
 }
