@@ -32,7 +32,7 @@ pub struct Process {
     pub state: ProcessState,
     pub parent: Parent,
     pub runtime: Duration,
-    cpu_remaining: Duration,
+    pub cpu_remaining: Duration,
 }
 
 impl Process {
