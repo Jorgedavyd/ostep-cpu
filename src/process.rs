@@ -33,6 +33,7 @@ pub struct Process {
     pub parent: Parent,
     pub runtime: Duration,
     pub cpu_remaining: Duration,
+    pub allotment: Duration
 }
 
 impl Process {
@@ -40,9 +41,10 @@ impl Process {
         Self {
             id,
             state,
-            runtime: Duration::default(),
             parent,
             cpu_remaining,
+            runtime: Duration::ZERO,
+            allotment: Duration::ZERO
         }
     }
 

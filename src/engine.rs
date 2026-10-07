@@ -8,7 +8,7 @@ use crate::{
     sched::scheduler::Scheduler,
 };
 
-const INTERRUPT_INTERVAL: Duration = Duration::from_millis(10);
+pub const INTERRUPT_INTERVAL: Duration = Duration::from_millis(10);
 
 pub type ProcessTable = BTreeMap<Pid, Process>;
 

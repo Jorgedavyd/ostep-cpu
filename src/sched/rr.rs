@@ -3,29 +3,31 @@ use std::{collections::VecDeque, time::Duration};
 use crate::{engine::ProcessTable, process::{Pid, Process}, sched::scheduler::Scheduler};
 
 pub struct RoundRobin {
-    tasks: VecDeque<Pid>,
+    tasks: VecDeque<(Pid, Duration)>,
 
     // Round robin configuration
     time_slice: Duration,
 
     // last task state tracking
-    last_task: Option<Pid>,
+    last_task: Option<(Pid, Duration)>,
 }
 
 impl Scheduler for RoundRobin {
     fn next(&mut self, _: &ProcessTable) -> Option<Pid> {
-        self.last_task = self.tasks.pop_front();
-        self.last_task
+        let mut last_task = self.tasks.pop_front()?;
+        last_task.1 += self.time_slice;
+        self.last_task = Some(last_task);
+        Some(last_task.0)
     }
 
     fn enqueue(&mut self, process: &Process) {
-        if let Some(last_task_pid) = self.last_task
+        if let Some((last_task_pid, allotment)) = self.last_task
             && process.id == last_task_pid
-                && process.runtime < self.time_slice
+                && allotment < self.time_slice
         {
-            self.tasks.push_front(process.id);
+            self.tasks.push_front((process.id, allotment));
         } else {
-            self.tasks.push_back(process.id);
+            self.tasks.push_back((process.id, Duration::ZERO));
         }
     }
 }
